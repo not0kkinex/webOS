@@ -1,0 +1,40 @@
+<!-- /index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WebDesk OS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='100%25' height='100%25' fill='%230b5fff'/%3E%3Ctext x='50%25' y='55%25' font-size='36' text-anchor='middle' fill='white'%3EOS%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./os.css" />
+</head>
+<body>
+  <div id="boot-splash">
+    <div class="logo">WebDesk<span>OS</span></div>
+    <div class="hint">Loading shell…</div>
+  </div>
+
+  <div id="desktop" aria-label="Desktop" tabindex="0" hidden>
+    <ul id="desktop-icons" role="list"></ul>
+    <div id="taskbar" role="toolbar" aria-label="Taskbar">
+      <button id="start-button" aria-label="Open launcher" title="Open launcher (⌘/Ctrl+Space)">☰</button>
+      <div id="task-buttons" role="list"></div>
+      <div id="tray">
+        <span id="clock"></span>
+      </div>
+    </div>
+    <dialog id="launcher" aria-label="App Launcher">
+      <form method="dialog">
+        <header>
+          <input id="launcher-search" placeholder="Search apps…" autofocus />
+          <button value="close" aria-label="Close">✕</button>
+        </header>
+        <div id="launcher-grid"></div>
+      </form>
+    </dialog>
+  </div>
+
+  <script type="module" src="./os.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,181 @@
+<!-- /apps/appstore/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>App Store</title>
+  <style>
+    :root { color-scheme: dark; }
+    html,body { height: 100%; }
+    body { margin: 0; background:#0b1429; color:#e6edf3; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; display:grid; grid-template-rows:auto auto 1fr; }
+    header, .actions { display:flex; gap:8px; padding:10px; border-bottom:1px solid #1b2a4a; background:#0e162b; align-items:center; }
+    input[type="url"], textarea { flex:1; min-width: 160px; padding:8px 10px; background:#0c1427; border:1px solid #27385d; border-radius:8px; color:#e6edf3; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #27385d; background:#0c1427; color:#e6edf3; cursor:pointer; }
+    main { display:grid; grid-template-columns: 1fr; min-height: 0; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap:12px; padding:12px; overflow:auto; }
+    .card { border:1px solid #223255; border-radius:12px; padding:12px; background:#0c1324; display:grid; gap:8px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .row img { width:24px; height:24px; }
+    .muted { color:#9fb0c9; font-size:12px; }
+    .ok { color:#2bd4bd; }
+    .err { color:#ff6b6b; }
+    .badge { font-size:11px; color:#cbd5e1; background:#1a284a; border:1px solid #2a3e6e; padding:2px 6px; border-radius:999px; }
+    textarea { height: 120px; font: 12px/1.4 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <input id="url" type="url" placeholder="Manifest URL (https://.../manifest.json)" />
+    <button id="fetch">Fetch</button>
+    <button id="install" disabled>Install</button>
+  </header>
+
+  <div class="actions">
+    <button id="refresh">Refresh Installed</button>
+    <span id="status" class="muted">Ready</span>
+  </div>
+
+  <main>
+    <div class="grid" id="installed"></div>
+    <div style="padding:12px;">
+      <label class="muted">Preview (read-only)</label>
+      <textarea id="preview" readonly></textarea>
+    </div>
+  </main>
+
+  <script>
+    function osCall(method, params) {
+      return new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        const handler = (ev) => {
+          const msg = ev.data;
+          if (!msg || msg.type !== 'OS_RPC' || msg.id !== id) return;
+          window.removeEventListener('message', handler);
+          if (msg.error) reject(msg.error); else resolve(msg.result);
+        };
+        window.addEventListener('message', handler);
+        window.parent.postMessage({ type:'OS_RPC', id, method, params, role:'app->os' }, '*');
+        setTimeout(() => { window.removeEventListener('message', handler); reject({code:'ETIMEDOUT'}); }, 7000);
+      });
+    }
+
+    const el = {
+      url: document.getElementById('url'),
+      fetchBtn: document.getElementById('fetch'),
+      installBtn: document.getElementById('install'),
+      refreshBtn: document.getElementById('refresh'),
+      installed: document.getElementById('installed'),
+      status: document.getElementById('status'),
+      preview: document.getElementById('preview'),
+    };
+
+    let currentManifest = null;
+
+    function setStatus(text, cls='muted') {
+      el.status.className = cls; el.status.textContent = text;
+    }
+
+    function validateManifest(m) {
+      const req = ['id','name','icon','entryUrl','permissions'];
+      for (const k of req) if (!m || !(k in m)) throw new Error(`Missing "${k}"`);
+      if (!Array.isArray(m.permissions)) throw new Error('"permissions" must be array');
+    }
+
+    async function fetchManifest() {
+      const url = el.url.value.trim();
+      if (!url) return setStatus('Enter a manifest URL', 'err');
+      try {
+        setStatus('Fetching manifest…');
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP '+res.status);
+        const m = await res.json();
+        validateManifest(m);
+        currentManifest = m;
+        el.preview.value = JSON.stringify(m, null, 2);
+        el.installBtn.disabled = false;
+        setStatus('Manifest ready', 'ok');
+      } catch (e) {
+        currentManifest = null;
+        el.preview.value = '';
+        el.installBtn.disabled = true;
+        setStatus('Fetch failed: '+ (e.message || e.code || e), 'err');
+      }
+    }
+
+    async function installCurrent() {
+      if (!currentManifest) return;
+      try {
+        await osCall('registry.install', { manifest: currentManifest });
+        setStatus('Installed "'+currentManifest.name+'"', 'ok');
+        await loadInstalled();
+      } catch (e) {
+        setStatus('Install failed: ' + (e.message || e.code || e), 'err');
+      }
+    }
+
+    function renderInstalled(apps) {
+      el.installed.innerHTML = '';
+      for (const app of apps) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="row">
+            <img alt="" src="${app.icon}"/>
+            <strong>${app.name}</strong>
+            ${app._builtin ? '<span class="badge">builtin</span>' : ''}
+          </div>
+          <div class="muted">${app.description || ''}</div>
+          <div class="row">
+            <span class="muted">id:</span><code>${app.id}</code>
+          </div>
+          <div class="row" style="gap:6px; flex-wrap: wrap;">
+            ${(app.permissions||[]).map(p=>`<span class="badge">${p}</span>`).join('')}
+          </div>
+          <div class="row" style="justify-content: space-between;">
+            <button data-launch>Launch</button>
+            ${app._builtin ? '' : '<button data-uninstall>Uninstall</button>'}
+          </div>
+        `;
+        card.querySelector('[data-launch]').onclick = () => window.parent.postMessage({ type:'LAUNCH', appId: app.id }, '*');
+        if (!app._builtin) {
+          card.querySelector('[data-uninstall]').onclick = async () => {
+            try {
+              await osCall('registry.uninstall', { appId: app.id });
+              setStatus('Uninstalled "'+app.name+'"', 'ok');
+              await loadInstalled();
+            } catch (e) {
+              setStatus('Uninstall failed: ' + (e.message || e.code || e), 'err');
+            }
+          };
+        }
+        el.installed.appendChild(card);
+      }
+    }
+
+    async function loadInstalled() {
+      try {
+        const apps = await osCall('registry.list');
+        renderInstalled(apps);
+      } catch (e) {
+        setStatus('Cannot list apps: ' + (e.message || e.code || e), 'err');
+      }
+    }
+
+    // allow quick launch from within store
+    window.addEventListener('message', (ev) => {
+      const msg = ev.data;
+      if (msg && msg.type === 'OS_LAUNCH') {
+        // reserved for future
+      }
+    });
+
+    el.fetchBtn.onclick = fetchManifest;
+    el.installBtn.onclick = installCurrent;
+    el.refreshBtn.onclick = loadInstalled;
+
+    (async () => { await loadInstalled(); })();
+  </script>
+</body>
+</html>
+

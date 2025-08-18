@@ -1,0 +1,31 @@
+<!-- /apps/clock/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Clock</title>
+  <style>
+    :root { color-scheme: dark; }
+    html,body { height: 100%; }
+    body { margin: 0; display: grid; place-content: center; background: #0b1429; color: #e6edf3; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu; }
+    .clock { font-size: 72px; font-weight: 800; letter-spacing: 2px; }
+    .date { text-align: center; color: #9fb0c9; }
+  </style>
+</head>
+<body>
+  <div class="clock" id="time">--:--</div>
+  <div class="date" id="date">--</div>
+  <script>
+    const time = document.getElementById('time');
+    const date = document.getElementById('date');
+    function tick() {
+      const d = new Date();
+      time.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      date.textContent = d.toLocaleDateString([], { weekday:'long', month:'short', day:'numeric', year:'numeric' });
+    }
+    setInterval(tick, 250); tick();
+  </script>
+</body>
+</html>
+

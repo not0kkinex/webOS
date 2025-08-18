@@ -1,0 +1,133 @@
+<!-- /apps/notes/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Notes</title>
+  <style>
+    :root { color-scheme: dark; }
+    html,body { height: 100%; }
+    body { margin: 0; background:#0b1429; color:#e6edf3; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu; display:grid; grid-template-rows:auto 1fr; }
+    header { display:flex; gap:8px; padding:8px; border-bottom:1px solid #1b2a4a; background:#0e162b; }
+    header input { flex:1; min-width: 120px; padding:8px 10px; background:#0c1427; border:1px solid #27385d; border-radius:8px; color:#e6edf3; }
+    header button { padding:8px 12px; border-radius:8px; border:1px solid #27385d; background:#0c1427; color:#e6edf3; cursor:pointer; }
+    main { display:grid; grid-template-columns: 240px 1fr; min-height: 0; }
+    .list { border-right:1px solid #1b2a4a; overflow:auto; }
+    .list-item { padding:10px 12px; border-bottom:1px solid #142243; cursor:pointer; }
+    .list-item.active { background:#0f1a33; }
+    .editor { display:grid; grid-template-rows:auto 1fr; min-width: 0; }
+    .editor textarea { width:100%; height:100%; padding:12px; border:0; resize:none; background:#0b1429; color:#e6edf3; font: 14px/1.5 ui-monospace,SFMono-Regular,Consolas,Menlo,monospace; }
+    .status { padding:6px 10px; color:#9fb0c9; font-size:12px; border-top:1px solid #1b2a4a; }
+  </style>
+</head>
+<body>
+  <header>
+    <input id="title" placeholder="Untitled note" />
+    <button id="new">New</button>
+    <button id="del">Delete</button>
+    <button id="save">Save</button>
+  </header>
+  <main>
+    <div class="list" id="list"></div>
+    <div class="editor">
+      <textarea id="text" placeholder="Write your note…"></textarea>
+      <div class="status" id="status">Ready</div>
+    </div>
+  </main>
+
+  <script>
+    // Minimal RPC helper for OS_API
+    function osCall(method, params) {
+      return new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        const handler = (ev) => {
+          const msg = ev.data;
+          if (!msg || msg.type !== 'OS_RPC' || msg.id !== id) return;
+          window.removeEventListener('message', handler);
+          if (msg.error) reject(msg.error); else resolve(msg.result);
+        };
+        window.addEventListener('message', handler);
+        window.parent.postMessage({ type:'OS_RPC', id, method, params, role:'app->os' }, '*');
+        setTimeout(() => { window.removeEventListener('message', handler); reject({code:'ETIMEDOUT'}); }, 5000);
+      });
+    }
+
+    const el = {
+      list: document.getElementById('list'),
+      title: document.getElementById('title'),
+      text: document.getElementById('text'),
+      status: document.getElementById('status'),
+      newBtn: document.getElementById('new'),
+      delBtn: document.getElementById('del'),
+      saveBtn: document.getElementById('save'),
+    };
+
+    let currentKey = null;
+    let notes = [];
+
+    function setStatus(msg) { el.status.textContent = msg; }
+
+    async function loadList() {
+      notes = await osCall('storage.list');
+      renderList();
+    }
+
+    function renderList() {
+      el.list.innerHTML = '';
+      for (const key of notes) {
+        const div = document.createElement('div');
+        div.className = 'list-item' + (key === currentKey ? ' active':'');
+        div.textContent = key;
+        div.onclick = () => openNote(key);
+        el.list.appendChild(div);
+      }
+    }
+
+    async function openNote(key) {
+      const data = await osCall('storage.get', { key, fallback: { title:'', text:'' } });
+      currentKey = key;
+      el.title.value = data.title || '';
+      el.text.value = data.text || '';
+      renderList();
+      setStatus('Opened "' + key + '"');
+    }
+
+    async function saveNote() {
+      const title = el.title.value.trim() || 'Untitled';
+      const text = el.text.value;
+      const key = currentKey || (title + ' ' + new Date().toISOString().slice(0,10));
+      await osCall('storage.set', { key, value: { title, text, updated: Date.now() } });
+      if (!notes.includes(key)) notes.push(key);
+      currentKey = key;
+      renderList();
+      setStatus('Saved "' + key + '"');
+    }
+
+    async function deleteNote() {
+      if (!currentKey) return;
+      await osCall('storage.remove', { key: currentKey });
+      notes = notes.filter(k => k !== currentKey);
+      currentKey = null;
+      el.title.value = ''; el.text.value = '';
+      renderList();
+      setStatus('Deleted');
+    }
+
+    // UI actions
+    el.newBtn.onclick = () => { currentKey = null; el.title.value=''; el.text.value=''; renderList(); setStatus('New note'); };
+    el.delBtn.onclick = () => deleteNote();
+    el.saveBtn.onclick = () => saveNote();
+
+    // Autosave
+    let t;
+    el.text.addEventListener('input', () => { clearTimeout(t); t = setTimeout(saveNote, 600); });
+
+    // Init
+    (async () => {
+      try { await loadList(); } catch (e) { setStatus('Storage permission missing or quota exceeded'); }
+    })();
+  </script>
+</body>
+</html>
+
