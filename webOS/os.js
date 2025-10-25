@@ -1,9 +1,9 @@
-// /os.js
-/* eslint-disable no-console */
+import { AuthAPI } from './auth.js';
+
 const $$ = (sel, el = document) => el.querySelector(sel);
 const $$$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
-const OS_VERSION = '0.2.0';
+const OS_VERSION = '0.3.0';
 const STORAGE_SOFT_QUOTA = 512 * 1024;
 
 const state = {
@@ -11,6 +11,7 @@ const state = {
   windows: new Map(),
   processes: new Map(),
   nextPid: 1,
+  currentUser: null,
 };
 
 const RegistryStorageKey = 'os:registry:installed';
@@ -92,7 +93,6 @@ const AppRegistry = (() => {
     if (installed.length === before) throw { code:'ENOAPP', message:'App not installed' };
     persistInstalled();
     byId = rebuildIndex();
-    // kill running instances
     for (const [pid, p] of state.processes.entries()) if (p.appId === appId) {
       WindowManager.close({ dataset: { winId: p.winId } });
     }
@@ -104,27 +104,79 @@ const AppRegistry = (() => {
 })();
 
 const Desktop = (() => {
+  const menubar = $$('#menubar');
   const desktop = $$('#desktop');
   const icons = $$('#desktop-icons');
-  const taskButtons = $$('#task-buttons');
-  const startBtn = $$('#start-button');
+  const dock = $$('#dock');
   const launcher = $$('#launcher');
   const launcherSearch = $$('#launcher-search');
   const launcherGrid = $$('#launcher-grid');
   const clockEl = $$('#clock');
+  const userNameEl = $$('#user-name');
+  const userAvatarEl = $$('#user-avatar');
+  const userToggle = $$('#user-toggle');
+  const userMenu = $$('#user-menu');
 
-  function boot() {
+  async function boot() {
+    const session = await AuthAPI.checkSession();
+    if (!session) {
+      window.location.href = './auth.html';
+      return;
+    }
+
+    const user = await AuthAPI.getCurrentUser();
+    if (!user) {
+      window.location.href = './auth.html';
+      return;
+    }
+
+    state.currentUser = user;
+    userNameEl.textContent = user.username || 'User';
+    userAvatarEl.textContent = (user.username || 'U')[0].toUpperCase();
+
     renderAll();
     bindGlobalShortcuts();
+    bindUserMenu();
     tickClock();
     setInterval(tickClock, 1000);
+
     $$('#boot-splash').hidden = true;
+    menubar.hidden = false;
     desktop.hidden = false;
     window.addEventListener('registry-changed', renderAll);
+
+    AuthAPI.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        window.location.href = './auth.html';
+      }
+    });
+  }
+
+  function bindUserMenu() {
+    userToggle.onclick = (e) => {
+      e.stopPropagation();
+      userMenu.classList.toggle('hidden');
+    };
+
+    document.addEventListener('click', (e) => {
+      if (!userMenu.contains(e.target) && e.target !== userToggle) {
+        userMenu.classList.add('hidden');
+      }
+    });
+
+    $$('#menu-logout').onclick = async () => {
+      await AuthAPI.signOut();
+    };
+
+    $$('#menu-profile').onclick = () => {
+      userMenu.classList.add('hidden');
+      alert('Profile settings coming soon!');
+    };
   }
 
   function renderAll() {
     renderDesktopIcons();
+    renderDock();
     renderLauncher();
   }
 
@@ -138,6 +190,20 @@ const Desktop = (() => {
       li.onclick = () => ProcessManager.launch(app.id);
       li.onkeydown = (e) => { if (e.key === 'Enter') ProcessManager.launch(app.id); };
       icons.appendChild(li);
+    }
+  }
+
+  function renderDock() {
+    const launcherItem = $$('#launcher-dock-item');
+    launcherItem.onclick = () => toggleLauncher();
+
+    for (const app of AppRegistry.list().slice(0, 5)) {
+      const item = document.createElement('div');
+      item.className = 'dock-item';
+      item.title = app.name;
+      item.innerHTML = `<img alt="" src="${app.icon}">`;
+      item.onclick = () => ProcessManager.launch(app.id);
+      dock.appendChild(item);
     }
   }
 
@@ -155,11 +221,10 @@ const Desktop = (() => {
       card.onclick = () => { launcher.close(); ProcessManager.launch(app.id); };
       launcherGrid.appendChild(card);
     }
-    startBtn.onclick = () => toggleLauncher();
     launcher.addEventListener('close', () => launcherSearch.value = '');
     launcherSearch.addEventListener('input', () => filterLauncher(launcherSearch.value));
-    $$('#desktop').addEventListener('dblclick', (e) => {
-      if ((e.target === $$('#desktop')) && !launcher.open) toggleLauncher();
+    $$('#desktop-content').addEventListener('dblclick', (e) => {
+      if ((e.target === $$('#desktop-content')) && !launcher.open) toggleLauncher();
     });
   }
 
@@ -192,47 +257,55 @@ const Desktop = (() => {
     clockEl.textContent = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
   }
 
-  function addTaskButton(winId, app) {
-    const btn = document.createElement('button');
-    btn.className = 'task-btn';
-    btn.innerHTML = `<img alt="" src="${app.icon}"><span>${app.name}</span>`;
-    btn.onclick = () => WindowManager.focus(winId, {toggleMinimize:true});
-    taskButtons.appendChild(btn);
-    return btn;
+  function addDockItem(winId, app) {
+    const existing = $$(`[data-win-id="${winId}"]`, dock);
+    if (existing) {
+      existing.classList.add('active');
+      return existing;
+    }
+
+    const item = document.createElement('div');
+    item.className = 'dock-item';
+    item.dataset.winId = winId;
+    item.innerHTML = `<img alt="" src="${app.icon}">`;
+    item.onclick = () => WindowManager.focus(winId, {toggleMinimize:true});
+    dock.appendChild(item);
+    return item;
   }
 
-  function removeTaskButton(btn) { btn.remove(); }
+  function removeDockItem(item) { item.remove(); }
 
-  function setTaskActive(btn, active) {
-    $$$('.task-btn').forEach(b => b.classList.remove('active'));
-    if (active) btn.classList.add('active');
+  function setDockItemActive(item, active) {
+    $$$('.dock-item[data-win-id]').forEach(i => i.classList.remove('active'));
+    if (active) item.classList.add('active');
   }
 
-  return { boot, addTaskButton, removeTaskButton, setTaskActive };
+  return { boot, addDockItem, removeDockItem, setDockItemActive };
 })();
 
 const WindowManager = (() => {
-  const root = $$('#desktop');
+  const root = $$('#desktop-content');
 
   function create(app, url) {
     const winId = crypto.randomUUID();
     const el = document.createElement('div');
     el.className = 'window';
     el.style.zIndex = ++state.zTop;
-    el.style.left = 80 + Math.random() * 180 + 'px';
-    el.style.top = 80 + Math.random() * 80 + 'px';
-    el.style.width = '720px';
-    el.style.height = '480px';
+    el.style.left = 100 + Math.random() * 200 + 'px';
+    el.style.top = 80 + Math.random() * 100 + 'px';
+    el.style.width = '800px';
+    el.style.height = '550px';
     el.dataset.winId = winId;
 
     el.innerHTML = `
       <div class="titlebar">
-        <div class="title"><img alt="" src="${app.icon}"><span>${app.name}</span></div>
         <div class="controls">
-          <button data-min title="Minimize">–</button>
-          <button data-max title="Maximize">▢</button>
-          <button data-close title="Close">✕</button>
+          <button data-close title="Close"></button>
+          <button data-min title="Minimize"></button>
+          <button data-max title="Maximize"></button>
         </div>
+        <div class="title"><img alt="" src="${app.icon}"><span>${app.name}</span></div>
+        <div></div>
       </div>
       <div class="content">
         <iframe sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" src="${url}"></iframe>
@@ -241,10 +314,10 @@ const WindowManager = (() => {
     `;
     root.appendChild(el);
 
-    const taskBtn = Desktop.addTaskButton(winId, app);
+    const dockItem = Desktop.addDockItem(winId, app);
     const iframe = $$('iframe', el);
 
-    const win = { el, app, iframe, taskBtn, maximized:false, lastRect:null };
+    const win = { el, app, iframe, dockItem, maximized:false, lastRect:null };
     state.windows.set(winId, win);
 
     bindWindowEvents(winId, win);
@@ -253,7 +326,7 @@ const WindowManager = (() => {
   }
 
   function bindWindowEvents(winId, win) {
-    const { el, taskBtn } = win;
+    const { el, dockItem } = win;
     const title = $$('.titlebar', el);
     const min = $$('[data-min]', el);
     const max = $$('[data-max]', el);
@@ -262,7 +335,7 @@ const WindowManager = (() => {
 
     let drag = null;
     title.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || e.target !== title) return;
       drag = { x:e.clientX - el.offsetLeft, y:e.clientY - el.offsetTop };
       focus(winId);
       e.preventDefault();
@@ -270,7 +343,7 @@ const WindowManager = (() => {
     window.addEventListener('mousemove', (e) => {
       if (!drag) return;
       const nx = Math.max(0, Math.min(e.clientX - drag.x, root.clientWidth - el.offsetWidth));
-      const ny = Math.max(0, Math.min(e.clientY - drag.y, root.clientHeight - el.offsetHeight - 44));
+      const ny = Math.max(0, Math.min(e.clientY - drag.y, root.clientHeight - el.offsetHeight));
       el.style.left = nx + 'px'; el.style.top = ny + 'px';
     });
     window.addEventListener('mouseup', () => drag = null);
@@ -283,8 +356,8 @@ const WindowManager = (() => {
     });
     window.addEventListener('mousemove', (e) => {
       if (!rs) return;
-      const w = Math.max(280, rs.w + (e.clientX - rs.x));
-      const h = Math.max(160, rs.h + (e.clientY - rs.y));
+      const w = Math.max(320, rs.w + (e.clientX - rs.x));
+      const h = Math.max(200, rs.h + (e.clientY - rs.y));
       el.style.width = w + 'px'; el.style.height = h + 'px';
     });
     window.addEventListener('mouseup', () => rs = null);
@@ -293,17 +366,17 @@ const WindowManager = (() => {
     max.onclick = () => toggleMaximize(winId);
     close.onclick = () => closeWindow(winId);
 
-    taskBtn.oncontextmenu = (e) => { e.preventDefault(); closeWindow(winId); };
+    dockItem.oncontextmenu = (e) => { e.preventDefault(); closeWindow(winId); };
   }
 
   function focus(winId, opts = {}) {
     const win = state.windows.get(winId);
     if (!win) return;
     win.el.style.zIndex = ++state.zTop;
-    Desktop.setTaskActive(win.taskBtn, true);
+    Desktop.setDockItemActive(win.dockItem, true);
     if (opts.toggleMinimize) {
       const hidden = win.el.classList.toggle('hidden');
-      if (!hidden) Desktop.setTaskActive(win.taskBtn, true);
+      if (!hidden) Desktop.setDockItemActive(win.dockItem, true);
     }
   }
 
@@ -320,7 +393,7 @@ const WindowManager = (() => {
     const win = state.windows.get(winId);
     if (!win) return;
     win.el.classList.add('hidden');
-    Desktop.setTaskActive(win.taskBtn, false);
+    Desktop.setDockItemActive(win.dockItem, false);
   }
 
   function toggleMaximize(winId) {
@@ -329,7 +402,7 @@ const WindowManager = (() => {
     if (!win.maximized) {
       win.lastRect = { left: win.el.style.left, top: win.el.style.top, width: win.el.style.width, height: win.el.style.height };
       win.el.style.left = '0px'; win.el.style.top = '0px';
-      win.el.style.width = '100%'; win.el.style.height = (root.clientHeight - 44) + 'px';
+      win.el.style.width = '100%'; win.el.style.height = '100%';
     } else {
       Object.assign(win.el.style, win.lastRect);
     }
@@ -340,7 +413,7 @@ const WindowManager = (() => {
     const win = state.windows.get(winId);
     if (!win) return;
     win.el.remove();
-    Desktop.removeTaskButton(win.taskBtn);
+    Desktop.removeDockItem(win.dockItem);
     state.windows.delete(winId);
     for (const [pid, p] of state.processes.entries()) if (p.winId === winId) state.processes.delete(pid);
   }
@@ -485,4 +558,3 @@ window.addEventListener('DOMContentLoaded', () => {
   console.info('WebDesk OS v' + OS_VERSION);
   Desktop.boot();
 });
-

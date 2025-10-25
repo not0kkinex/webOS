@@ -14,13 +14,35 @@
     <div class="hint">Loading shell…</div>
   </div>
 
+  <div id="menubar" hidden>
+    <div class="menubar-logo">WebDeskOS</div>
+    <div class="menubar-menu">
+      <div class="menubar-item">File</div>
+      <div class="menubar-item">Edit</div>
+      <div class="menubar-item">View</div>
+    </div>
+    <div class="menubar-right">
+      <span id="clock"></span>
+      <div class="menubar-user" id="user-toggle">
+        <div class="user-avatar" id="user-avatar"></div>
+        <span id="user-name"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="user-menu" class="hidden">
+    <div class="menu-item" id="menu-profile">Profile</div>
+    <div class="menu-separator"></div>
+    <div class="menu-item" id="menu-logout">Sign Out</div>
+  </div>
+
   <div id="desktop" aria-label="Desktop" tabindex="0" hidden>
-    <ul id="desktop-icons" role="list"></ul>
-    <div id="taskbar" role="toolbar" aria-label="Taskbar">
-      <button id="start-button" aria-label="Open launcher" title="Open launcher (⌘/Ctrl+Space)">☰</button>
-      <div id="task-buttons" role="list"></div>
-      <div id="tray">
-        <span id="clock"></span>
+    <div id="desktop-content">
+      <ul id="desktop-icons" role="list"></ul>
+    </div>
+    <div id="dock" role="toolbar" aria-label="Dock">
+      <div class="dock-item" id="launcher-dock-item" title="Applications">
+        <img src="https://cdn.jsdelivr.net/gh/tabler/tabler-icons/icons/apps.svg" alt="Apps">
       </div>
     </div>
     <dialog id="launcher" aria-label="App Launcher">
